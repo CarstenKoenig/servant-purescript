@@ -12,7 +12,7 @@
 
 module Servant.API.BrowserHeader where
 
-import Servant.Utils.Links
+import Servant.Links
 import Servant
 import Servant.Foreign
 import Servant.Subscriber.Subscribable
@@ -25,8 +25,8 @@ data BrowserHeader (sym :: Symbol) a
 type instance IsElem' e (BrowserHeader :> s) = IsElem e s
 
 instance HasLink sub => HasLink (BrowserHeader sym a :> sub) where
-    type MkLink (BrowserHeader sym a :> sub) = MkLink (Header sym a :> sub)
-    toLink _ = toLink (Proxy :: Proxy (Header sym a :> sub))
+    type MkLink (BrowserHeader sym a :> sub) a = MkLink (Header sym a :> sub) a
+    toLink toA _ = toLink toA (Proxy :: Proxy (BrowserHeader sym a :> sub))
 
 instance (KnownSymbol sym, FromHttpApiData a, HasServer sublayout context)
       => HasServer (BrowserHeader sym a :> sublayout) context where
@@ -34,7 +34,7 @@ instance (KnownSymbol sym, FromHttpApiData a, HasServer sublayout context)
   type ServerT (BrowserHeader sym a :> sublayout) m = ServerT (Header sym a :> sublayout) m
 
   route Proxy = route (Proxy :: Proxy (Header sym a :> sublayout))
-
+  hoistServerWithContext _ pc nt s = hoistServerWithContext (Proxy :: Proxy sublayout) pc nt . s
 
 -- Ignore BrowserHeader in HasForeign:
 instance (KnownSymbol sym, HasForeign lang ftype sublayout)
