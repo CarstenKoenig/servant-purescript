@@ -7,6 +7,7 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE TypeApplications      #-}
 
 
 
@@ -37,14 +38,11 @@ import           Network.Wai
 import           Network.Wai.Handler.Warp
 import           Servant
 import           Servant.API
-import           Servant.Subscriber
-import           Servant.Subscriber.Subscribable
-import           Servant.Subscriber.Types
+import System.Directory (getCurrentDirectory)
 
 
 data CounterData = CounterData {
     _counter    :: IORef Int
-  , _subscriber :: Subscriber FullAPI
   }
 
 makeLenses ''CounterData
@@ -59,13 +57,8 @@ getCounter = liftIO . readIORef =<< view counter
 putCounter :: HandlerConstraint m => CounterAction -> m Int
 putCounter action = do
   r <- liftIO . flip atomicModifyIORef' (doAction action) =<< view counter
-
-  subscriber' <- view subscriber
-
-  liftIO . atomically $ notify subscriber' ModifyEvent link linkURI
   return r
   where
-    link = Proxy :: Proxy ("counter" :> Get '[JSON] Int)
     doAction (CounterAdd val) c = (c+val, c+val)
     doAction (CounterSet val) _ = (val, val)
 
@@ -83,10 +76,12 @@ toServant _ _ _ = throwError $ err401 { errBody = "You have to provide a valid s
 counterServer :: CounterData -> Maybe AuthToken -> Server CounterAPI
 counterServer cVar secret = hoistServer (Proxy :: Proxy CounterAPI) (toServant cVar secret) counterHandlers
 
-fullServer :: CounterData -> Server FullAPI
-fullServer cVar = counterServer cVar :<|> serveDirectoryFileServer "frontend/dist/"
+fullServer :: FilePath -> CounterData -> Server FullAPI
+fullServer wd cVar = counterServer cVar :<|> serveDirectoryFileServer (wd <> "/frontend/dist")
 
 main :: IO ()
 main = do
-    cd <- CounterData <$> newIORef 0 <*> atomically (makeSubscriber "subscriber" runStderrLoggingT)
-    run 8081 $ serveSubscriber (cd ^. subscriber) (fullServer cd)
+    cd <- CounterData <$> newIORef 0
+    wd <- getCurrentDirectory
+    putStrLn $ wd <> "/frontend/dist"
+    run 8081 $ serve (Proxy @FullAPI) (fullServer wd cd)

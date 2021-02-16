@@ -24,8 +24,7 @@ import           Language.PureScript.Bridge
 import           Language.PureScript.Bridge.PSTypes
 import           Network.HTTP.Types.URI             (urlDecode)
 import           Servant.API
-import Servant.PureScript (jsonParseUrlPiece, jsonParseHeader)
-import           Servant.Subscriber.Subscribable
+import           Servant.PureScript (jsonParseUrlPiece, jsonParseHeader)
 import           Web.HttpApiData
 
 
@@ -54,7 +53,7 @@ type FullAPI = AppAPI :<|> Raw
 type AppAPI = Header "AuthToken" AuthToken :> "counter" :> CounterAPI
 
 
-type CounterAPI = Subscribable :> Get '[JSON] Int
+type CounterAPI = Get '[JSON] Int
              :<|> ReqBody '[JSON] CounterAction :> Put '[JSON] Int
 
 

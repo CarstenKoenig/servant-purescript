@@ -1,10 +1,8 @@
 -- | A header which gets sent by the browser and is thus of no concern for the client consumer of the API.
 {-# LANGUAGE DataKinds          #-}
-{-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE DeriveFunctor      #-}
 {-# LANGUAGE ConstraintKinds        #-}
 {-# LANGUAGE FlexibleInstances      #-}
-{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses  #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE TypeOperators          #-}
@@ -28,7 +26,11 @@ instance HasLink sub => HasLink (BrowserHeader sym a :> sub) where
     type MkLink (BrowserHeader sym a :> sub) a = MkLink (Header sym a :> sub) a
     toLink toA _ = toLink toA (Proxy :: Proxy (BrowserHeader sym a :> sub))
 
-instance (KnownSymbol sym, FromHttpApiData a, HasServer sublayout context)
+instance ( KnownSymbol sym
+         , FromHttpApiData a
+         , HasServer sublayout context
+         , HasContextEntry (context .++ DefaultErrorFormatters) ErrorFormatters
+         )
       => HasServer (BrowserHeader sym a :> sublayout) context where
 
   type ServerT (BrowserHeader sym a :> sublayout) m = ServerT (Header sym a :> sublayout) m

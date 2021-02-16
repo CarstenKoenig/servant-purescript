@@ -22,8 +22,6 @@ import           Language.PureScript.Bridge
 import           Language.PureScript.Bridge.PSTypes
 import           Servant.API
 import           Servant.PureScript
-import           Servant.Subscriber.Subscribable
-
 import           Counter.WebAPI
 
 -- | We have been lazy and defined our types in the WebAPI module,
@@ -56,7 +54,7 @@ myTypes =  [
 
 mySettings :: Settings
 mySettings = (addReaderParam "AuthToken" defaultSettings & apiModuleName .~ "Counter.WebAPI") {
-  _generateSubscriberAPI = True
+  _generateSubscriberAPI = False
   }
 
 

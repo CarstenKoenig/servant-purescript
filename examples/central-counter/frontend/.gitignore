@@ -5,3 +5,4 @@ output
 .psci_modules
 npm-debug.log
 src/Counter/*
+yarn.lock

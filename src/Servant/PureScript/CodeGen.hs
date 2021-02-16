@@ -56,7 +56,7 @@ getReaderParams opts allParams = let
 
 genParamSettings :: [PSParam]-> Doc
 genParamSettings rParams = let
-    genEntry arg = arg ^. pName ^. to psVar <+> "::" <+> arg ^. pType ^. typeName ^. to strictText
+    genEntry arg = arg ^. (pName . to psVar) <+> "::" <+> arg ^. (pType . typeName . to strictText)
     genEntries   = docIntercalate (line <> ", ") . map genEntry
   in
     "newtype SPParams_ = SPParams_" <+/> align (
@@ -64,6 +64,8 @@ genParamSettings rParams = let
           <+> genEntries rParams
           </> rbrace
           )
+    </>
+    "derive instance newtypeSPParams_ :: Newtype SPParams_ _"
 
 genFunction :: [PSParam] -> Req PSType -> Doc
 genFunction allRParams req = let
@@ -88,7 +90,7 @@ genGetReaderParams = stack . map (genGetReaderParam . psVar . _pName)
 
 
 genSignature :: Text -> [PSType] -> Maybe PSType -> Doc
-genSignature = genSignatureBuilder $ "forall eff m." <+/> "MonadAsk (SPSettings_ SPParams_) m => MonadError AjaxError m => MonadAff ( ajax :: AJAX | eff) m" <+/> "=>"
+genSignature = genSignatureBuilder $ "forall m." <+/> "MonadAsk (SPSettings_ SPParams_) m => MonadError AjaxError m => MonadAff m" <+/> "=>"
 
 genSignatureBuilder :: Doc -> Text -> [PSType] -> Maybe PSType -> Doc
 genSignatureBuilder constraint fnName params mRet = fName <+> "::" <+> align (constraint <+/> parameterString)
@@ -108,35 +110,26 @@ genFnHead fnName params = fName <+> align (docIntercalate softline docParams <+>
 genFnBody :: [PSParam] -> Req PSType -> Doc
 genFnBody rParams req = "do"
     </> indent 2 (
-          "spOpts_' <- ask"
-      </> "let spOpts_ = case spOpts_' of SPSettings_ o -> o"
-      </> "let spParams_ = case spOpts_.params of SPParams_ ps_ -> ps_"
+          "settings <- ask"
+      </> "let spParams_ = view (_params <<< _Newtype) settings"
+      </> "let encodeOptions = view _encodeJson settings"
+      </> "let decodeOptions = view _decodeJson settings"
       </> genGetReaderParams rParams
-      </> hang 6 ("let httpMethod =" <+> dquotes (req ^. reqMethod ^. to T.decodeUtf8 ^. to strictText))
+      </> hang 6 ("let httpMethod = fromString" <+> dquotes (req ^. reqMethod ^. to T.decodeUtf8 ^. to strictText))
       </> genBuildQueryArgs (req ^. reqUrl ^. queryStr)
       </> hang 6 ("let reqUrl ="     <+> genBuildURL (req ^. reqUrl))
       </> "let reqHeaders =" </> indent 6 (req ^. reqHeaders ^. to genBuildHeaders)
-      </> case req ^. reqBody of
-             Nothing -> ""
-             Just _ -> "let encodeJson = case spOpts_.encodeJson of SPSettingsEncodeJson_ e -> e"
       </> "let affReq =" <+> hang 2 ( "defaultRequest" </>
             "{ method ="  <+> "httpMethod"
         </> ", url ="     <+> "reqUrl"
         </> ", headers =" <+> "defaultRequest.headers <> reqHeaders"
         </> case req ^. reqBody of
               Nothing -> "}"
-              Just _  -> ", content =" <+> "toNullable <<< Just <<< stringify <<< encodeJson $ reqBody" </> "}"
+              Just _  -> ", content =" <+> "Just $ string $ encodeJSON reqBody" </> "}"
       )
-      </> if shallParseBody (req^.reqReturnType)
-          then "affResp <- affjax affReq"
-           </> "let decodeJson = case spOpts_.decodeJson of SPSettingsDecodeJson_ d -> d"
-           </> "getResult affReq decodeJson affResp"
-          else "_ <- affjax affReq"
-           </> "pure unit"
+      </> "r <- ajax decode affReq"
+      </> "pure r.body"
     ) <> line
-  where
-    shallParseBody Nothing = False
-    shallParseBody (Just t) = t^.typeName /= "Unit"
 
 genBuildURL :: Url PSType -> Doc
 genBuildURL url = psVar baseURLId <+> "<>"
@@ -148,7 +141,7 @@ genBuildPath = docIntercalate (softline <> "<> \"/\" <> ") . map (genBuildSegmen
 
 genBuildSegment :: SegmentType PSType -> Doc
 genBuildSegment (Static (PathSegment seg)) = dquotes $ strictText (textURLEncode False seg)
-genBuildSegment (Cap arg) = "encodeURLPiece spOpts_'" <+> arg ^. argName ^. to unPathSegment ^. to psVar
+genBuildSegment (Cap arg) = "encodeURLPiece settings" <+> arg ^. argName ^. to unPathSegment ^. to psVar
 
 genBuildQueryArgs :: [QueryArg PSType] -> Doc
 genBuildQueryArgs [] = "let queryString = \"\""
@@ -164,7 +157,7 @@ genBuildQueryArg arg = case arg ^. queryArgType of
   where
     argText = arg ^. queryArgName ^. argName ^. to unPathSegment
     encodedArgName = strictText . textURLEncode True $ argText
-    genQueryEncoding fn op = fn <+> dquotes encodedArgName <+> op <+> psVar argText
+    genQueryEncoding fn operator = fn <+> dquotes encodedArgName <+> operator <+> psVar argText
 
 -----------
 
@@ -176,10 +169,8 @@ genBuildHeader (HeaderArg arg) = let
     argText = arg ^. argName ^. to unPathSegment
     encodedArgName = strictText . textURLEncode True $ argText
   in
-    align $ "{ field : " <> dquotes encodedArgName
-      <+/> comma <+> "value :"
-      <+> "encodeHeader spOpts_'" <+> psVar argText
-      </> "}"
+    align $ "RequestHeader " <> dquotes encodedArgName
+      <+> parens ("encodeHeader spOpts_'" <+> psVar argText)
 genBuildHeader (ReplaceHeaderArg _ _) = error "ReplaceHeaderArg - not yet implemented!"
 
 reqsToImportLines :: [Req PSType] -> ImportLines
@@ -210,20 +201,20 @@ mkPsMaybe t = TypeInfo "" "" "Maybe" [t]
 
 queryArgToParam :: QueryArg PSType -> Param PSType
 queryArgToParam arg = Param {
-    _pType = pType
+    _pType = paramType
   , _pName = arg ^. queryArgName ^. argName ^. to unPathSegment
   }
   where
-    pType = case arg ^. queryArgType of
+    paramType = case arg ^. queryArgType of
       Normal -> mkPsMaybe (arg ^. queryArgName ^. argType)
       _ -> arg ^. queryArgName ^. argType
 
-headerArgToParam :: HeaderArg f -> Param f
+headerArgToParam :: HeaderArg PSType -> Param PSType
 headerArgToParam (HeaderArg arg) = Param {
     _pName = arg ^. argName ^. to unPathSegment
-  , _pType = arg ^. argType
+  , _pType = arg ^. (argType . typeParameters . to head)
   }
-headerArgToParam _ = error "We do not support ReplaceHeaderArg - as I have no idea what this is all about."
+headerArgToParam (ReplaceHeaderArg _ _) = error "We do not support ReplaceHeaderArg - as I have no idea what this is all about."
 
 reqBodyToParam :: Maybe f -> Maybe (Param f)
 reqBodyToParam = fmap (Param "reqBody")
